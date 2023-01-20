@@ -1,8 +1,10 @@
 import argparse
+
 import requests
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
 from model import Base, Url
 
 parser = argparse.ArgumentParser(
@@ -28,11 +30,8 @@ Session = sessionmaker(bind=engine)
 session = Session()
 Base.metadata.create_all(engine)
 
-PAGES_VISITATED = []
-
 
 def crawler(page):
-    PAGES_VISITATED.append(page)
     response = requests.get(page)
 
     if response.status_code != 200:
@@ -67,7 +66,11 @@ def crawler(page):
         if current_page:
             if "#" in current_page:
                 current_page = current_page[: current_page.find("#")]
-            if current_page not in PAGES_VISITATED:
+            if (
+                not session.query(Url)
+                .filter(Url.url == current_page)
+                .one_or_none()
+            ):
                 crawler(current_page)
 
 
