@@ -7,9 +7,9 @@ from model import Base, Url
 
 parser = argparse.ArgumentParser(
     description=(
-        'Metadata checker for your website. '
-        'This program will generate a sqlite database '
-        'with all endpoints and the metadata of your site'
+        "Metadata checker for your website. "
+        "This program will generate a sqlite database "
+        "with all endpoints and the metadata of your site"
     )
 )
 
@@ -30,6 +30,7 @@ Base.metadata.create_all(engine)
 
 PAGES_VISITATED = []
 
+
 def crawler(page):
     PAGES_VISITATED.append(page)
     response = requests.get(page)
@@ -42,25 +43,30 @@ def crawler(page):
 
     html_page = response.content
 
-    soup = BeautifulSoup(html_page, 'html.parser')
+    soup = BeautifulSoup(html_page, "html.parser")
 
-    entry = Url(site=SITE, url=page, status=response.status_code, metadata_json=get_page_info(soup))
+    entry = Url(
+        site=SITE,
+        url=page,
+        status=response.status_code,
+        metadata_json=get_page_info(soup),
+    )
     session.add(entry)
     session.commit()
 
     for a in soup.find_all("a"):
         current_page = ""
-        if not a.get('href'):
+        if not a.get("href"):
             continue
 
-        if a.get('href').startswith('/'):
+        if a.get("href").startswith("/"):
             current_page = SITE + a.get("href")
-        elif a.get('href').startswith(SITE):
-            current_page = a.get('href')
-        
+        elif a.get("href").startswith(SITE):
+            current_page = a.get("href")
+
         if current_page:
             if "#" in current_page:
-                current_page = current_page[:current_page.find("#")]
+                current_page = current_page[: current_page.find("#")]
             if current_page not in PAGES_VISITATED:
                 crawler(current_page)
 
@@ -75,5 +81,6 @@ def get_page_info(soup):
             metadata.append((meta.get("property"), meta.get("content")))
 
     return metadata
+
 
 crawler(SITE)
