@@ -1,11 +1,12 @@
 import argparse
+from datetime import datetime
 
 import requests
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from model import Base, Url
+from model import Base, Url, LinkMap
 
 parser = argparse.ArgumentParser(
     description=(
@@ -16,6 +17,16 @@ parser = argparse.ArgumentParser(
 )
 
 parser.add_argument("site", help="Your website.")
+parser.add_argument(
+    "-d", "--depth", help="How deep to follow links.", required=False, type=int
+)
+parser.add_argument(
+    "-g",
+    "--graph",
+    help="Save data to generate a graph.",
+    required=False,
+    action="store_true",
+)
 
 args = parser.parse_args()
 
@@ -23,19 +34,33 @@ if not args.site:
     print("You must add add a URL to parse.")
     exit(1)
 
-SITE = args.site
+
+def remove_trailing_slash(url):
+    if url[-1:] == "/":
+        url = url[:-1]
+    return url
+
+
+SITE = remove_trailing_slash(args.site)
 
 engine = create_engine("sqlite:///database.db")
 Session = sessionmaker(bind=engine)
 session = Session()
 Base.metadata.create_all(engine)
 
+run_time = datetime.utcnow().isoformat()
 
-def crawler(page):
+
+def crawler(page, depth):
+    # Remove trailing slashes
+    page = remove_trailing_slash(page)
+
     response = requests.get(page)
 
     if response.status_code != 200:
-        entry = Url(site=SITE, url=page, status=response.status_code)
+        entry = Url(
+            site=SITE, run_time=run_time, url=page, status=response.status_code
+        )
         session.add(entry)
         session.commit()
         return
@@ -46,12 +71,16 @@ def crawler(page):
 
     entry = Url(
         site=SITE,
+        run_time=run_time,
         url=page,
         status=response.status_code,
         metadata_json=get_page_info(soup),
     )
     session.add(entry)
     session.commit()
+
+    if args.depth and depth == args.depth:
+        return
 
     for a in soup.find_all("a"):
         current_page = ""
@@ -66,16 +95,32 @@ def crawler(page):
         if current_page:
             if "#" in current_page:
                 current_page = current_page[: current_page.find("#")]
+
+            current_page = remove_trailing_slash(current_page)
+
+            if args.graph:
+                link_entry = LinkMap(
+                    site=SITE, run_time=run_time, url=page, link=current_page
+                )
+                session.add(link_entry)
+                session.commit()
+
             if (
                 not session.query(Url)
-                .filter(Url.url == current_page)
+                .filter(Url.url == current_page, Url.run_time == run_time)
                 .one_or_none()
             ):
-                crawler(current_page)
+                crawler(current_page, depth + 1)
 
 
 def get_page_info(soup):
     metadata = []
+
+    title = soup.find("title")
+
+    if title:
+        metadata.append(("title", title.string))
+
     for meta in soup.find_all("meta"):
         if meta.get("name"):
             metadata.append((meta.get("name"), meta.get("content")))
@@ -83,7 +128,20 @@ def get_page_info(soup):
         if meta.get("property"):
             metadata.append((meta.get("property"), meta.get("content")))
 
+    for meta in soup.find_all("link"):
+        # don't get things like text/css or image/x-icon
+        if not meta.get("type"):
+            metadata.append((meta.get("rel"), meta.get("href")))
+
     return metadata
 
 
-crawler(SITE)
+start_time = datetime.now()
+print(f"Crawling: {SITE}")
+if args.depth:
+    print(f"    Depth: {args.depth}")
+if args.graph:
+    print("    Generating graph data")
+
+crawler(SITE, 0)
+print(f"Finished in {datetime.now() - start_time}")
