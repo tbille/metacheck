@@ -99,11 +99,23 @@ def crawler(page, depth):
             current_page = remove_trailing_slash(current_page)
 
             if args.graph:
-                link_entry = LinkMap(
-                    site=SITE, run_time=run_time, url=page, link=current_page
-                )
-                session.add(link_entry)
-                session.commit()
+                if (
+                    not session.query(LinkMap)
+                    .filter(
+                        LinkMap.url == page,
+                        LinkMap.link == current_page,
+                        LinkMap.run_time == run_time,
+                    )
+                    .one_or_none()
+                ):
+                    link_entry = LinkMap(
+                        site=SITE,
+                        run_time=run_time,
+                        url=page,
+                        link=current_page,
+                    )
+                    session.add(link_entry)
+                    session.commit()
 
             if (
                 not session.query(Url)
