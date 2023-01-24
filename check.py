@@ -48,8 +48,6 @@ Session = sessionmaker(bind=engine)
 session = Session()
 Base.metadata.create_all(engine)
 
-run_time = datetime.utcnow().isoformat()
-
 
 def crawler(page, depth):
     # Remove trailing slashes
@@ -58,9 +56,7 @@ def crawler(page, depth):
     response = requests.get(page)
 
     if response.status_code != 200:
-        entry = Url(
-            site=SITE, run_time=run_time, url=page, status=response.status_code
-        )
+        entry = Url(site=SITE, url=page, status=response.status_code)
         session.add(entry)
         session.commit()
         return
@@ -71,7 +67,6 @@ def crawler(page, depth):
 
     entry = Url(
         site=SITE,
-        run_time=run_time,
         url=page,
         status=response.status_code,
         metadata_json=get_page_info(soup),
@@ -104,13 +99,11 @@ def crawler(page, depth):
                     .filter(
                         LinkMap.url == page,
                         LinkMap.link == current_page,
-                        LinkMap.run_time == run_time,
                     )
                     .one_or_none()
                 ):
                     link_entry = LinkMap(
                         site=SITE,
-                        run_time=run_time,
                         url=page,
                         link=current_page,
                     )
@@ -119,7 +112,7 @@ def crawler(page, depth):
 
             if (
                 not session.query(Url)
-                .filter(Url.url == current_page, Url.run_time == run_time)
+                .filter(Url.url == current_page)
                 .one_or_none()
             ):
                 crawler(current_page, depth + 1)
@@ -144,7 +137,7 @@ def get_page_info(soup):
         # don't get things like text/css or image/x-icon
         if not meta.get("type"):
             rel = meta.get("rel")
-            if not rel in ["preconnect", "preload"]:
+            if set(rel).isdisjoint(["preconnect", "preload"]):
                 metadata.append((meta.get("rel")[0], meta.get("href")))
 
     return metadata

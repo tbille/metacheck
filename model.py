@@ -9,7 +9,6 @@ class Url(Base):
 
     id = Column(Integer, primary_key=True)
     site = Column(String)
-    run_time = Column(String)
     url = Column(String)
     status = Column(Integer)
     metadata_json = Column(JSON, nullable=True)
@@ -20,6 +19,5 @@ class LinkMap(Base):
 
     id = Column(Integer, primary_key=True)
     site = Column(String)
-    run_time = Column(String)
     url = Column(String)
     link = Column(String)
