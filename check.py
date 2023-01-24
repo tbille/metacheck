@@ -45,6 +45,8 @@ if not args.site:
     exit(1)
 
 
+requests_session = requests.Session()
+
 def remove_trailing_slash(url):
     if url[-1:] == "/":
         url = url[:-1]
@@ -63,7 +65,7 @@ def crawler(page, depth):
     # Remove trailing slashes
     page = remove_trailing_slash(page)
 
-    response = requests.get(page)
+    response = requests_session.get(page)
 
     if response.status_code != 200:
         entry = Url(site=SITE, url=page, status=response.status_code)
