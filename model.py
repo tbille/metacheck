@@ -13,6 +13,9 @@ class Url(Base):
     status = Column(Integer)
     metadata_json = Column(JSON, nullable=True)
 
+    def as_dict(self):
+        return {c.name: getattr(self, c.name) for c in self.__table__.columns}
+
 
 class LinkMap(Base):
     __tablename__ = "link_map"
