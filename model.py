@@ -12,3 +12,12 @@ class Url(Base):
     url = Column(String)
     status = Column(Integer)
     metadata_json = Column(JSON, nullable=True)
+
+
+class LinkMap(Base):
+    __tablename__ = "link_map"
+
+    id = Column(Integer, primary_key=True)
+    site = Column(String)
+    url = Column(String)
+    link = Column(String)
