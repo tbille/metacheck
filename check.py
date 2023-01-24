@@ -147,7 +147,7 @@ def get_page_info(soup):
         # don't get things like text/css or image/x-icon
         if not meta.get("type"):
             rel = meta.get("rel")
-            if set(rel).isdisjoint(["preconnect", "preload"]):
+            if rel and set(rel).isdisjoint(["preconnect", "preload"]):
                 metadata.append((meta.get("rel")[0], meta.get("href")))
 
     return metadata
