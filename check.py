@@ -1,4 +1,6 @@
 import argparse
+import json
+from os import path
 from datetime import datetime
 
 import requests
@@ -24,6 +26,14 @@ parser.add_argument(
     "-g",
     "--graph",
     help="Save data to generate a graph.",
+    required=False,
+    action="store_true",
+)
+
+parser.add_argument(
+    "-r",
+    "--report",
+    help="Generate a report.",
     required=False,
     action="store_true",
 )
@@ -137,7 +147,7 @@ def get_page_info(soup):
         # don't get things like text/css or image/x-icon
         if not meta.get("type"):
             rel = meta.get("rel")
-            if set(rel).isdisjoint(["preconnect", "preload"]):
+            if rel and set(rel).isdisjoint(["preconnect", "preload"]):
                 metadata.append((meta.get("rel")[0], meta.get("href")))
 
     return metadata
@@ -151,4 +161,32 @@ if args.graph:
     print("    Generating graph data")
 
 crawler(SITE, 0)
-print(f"Finished in {datetime.now() - start_time}")
+print(f"Finished crawling in {datetime.now() - start_time}")
+
+if not args.report:
+    exit()
+
+print("")
+print("Generating report")
+
+dir = path.dirname(path.realpath(__file__))
+
+rows = session.query(Url).all()
+results = {"page_count": len(rows), "site": SITE, "pages": []}
+for row in rows:
+    result = row.as_dict()
+    if "metadata_json" in result and result["metadata_json"] != None:
+        result["metadata"] = {m[0]: m[1] for m in result["metadata_json"]}
+
+    del result["metadata_json"]
+    results["pages"].append(result)
+
+raw_json = json.dumps(results)
+template = ""
+with open(f"{dir}/assets/report/index.html", "r") as file:
+    template = file.read().replace("{{data}}", raw_json)
+
+with open(f"{dir}/index.html", "w+") as file:
+    file.write(template)
+
+print(f"Report created open {dir}/report.html")
