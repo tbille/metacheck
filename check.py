@@ -1,14 +1,16 @@
 import argparse
 import json
-from os import path
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from os import path
+from queue import Empty, Queue
 
 import requests
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import scoped_session, sessionmaker
 
-from model import Base, Url, LinkMap
+from model import Base, LinkMap, Url
 
 parser = argparse.ArgumentParser(
     description=(
@@ -47,30 +49,42 @@ if not args.site:
 
 requests_session = requests.Session()
 
+
 def remove_trailing_slash(url):
     if url[-1:] == "/":
         url = url[:-1]
+
+    if "#" in url:
+        url = url[: url.find("#")]
+
     return url
 
 
 SITE = remove_trailing_slash(args.site)
 
-engine = create_engine("sqlite:///database.db")
-Session = sessionmaker(bind=engine)
-session = Session()
+engine = create_engine(
+    "sqlite:///database.db", connect_args={"check_same_thread": False}
+)
+database_session_factory = sessionmaker(bind=engine)
+database_session = scoped_session(database_session_factory)
+
+Base.metadata.drop_all(engine)
 Base.metadata.create_all(engine)
 
 
-def crawler(page, depth):
-    # Remove trailing slashes
-    page = remove_trailing_slash(page)
+crawl_queue = Queue()
+crawl_queue.put(SITE)
 
-    response = requests_session.get(page)
+visited = []
+
+
+def process_page(page):
+    response = requests_session.get(page, timeout=15)
 
     if response.status_code != 200:
         entry = Url(site=SITE, url=page, status=response.status_code)
-        session.add(entry)
-        session.commit()
+        database_session.add(entry)
+        database_session.commit()
         return
 
     html_page = response.content
@@ -83,11 +97,8 @@ def crawler(page, depth):
         status=response.status_code,
         metadata_json=get_page_info(soup),
     )
-    session.add(entry)
-    session.commit()
-
-    if args.depth and depth == args.depth:
-        return
+    database_session.add(entry)
+    database_session.commit()
 
     for a in soup.find_all("a"):
         current_page = ""
@@ -100,14 +111,16 @@ def crawler(page, depth):
             current_page = a.get("href")
 
         if current_page:
-            if "#" in current_page:
-                current_page = current_page[: current_page.find("#")]
-
             current_page = remove_trailing_slash(current_page)
+            if (
+                current_page not in visited
+                and current_page not in crawl_queue.queue
+            ):
+                crawl_queue.put(current_page)
 
             if args.graph:
                 if (
-                    not session.query(LinkMap)
+                    not database_session.query(LinkMap)
                     .filter(
                         LinkMap.url == page,
                         LinkMap.link == current_page,
@@ -119,15 +132,23 @@ def crawler(page, depth):
                         url=page,
                         link=current_page,
                     )
-                    session.add(link_entry)
-                    session.commit()
+                    database_session.add(link_entry)
+                    database_session.commit()
 
-            if (
-                not session.query(Url)
-                .filter(Url.url == current_page)
-                .one_or_none()
-            ):
-                crawler(current_page, depth + 1)
+
+def run_crawler():
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        while True:
+            try:
+                page = crawl_queue.get(timeout=15)
+                if page not in visited:
+                    visited.append(page)
+                    executor.submit(process_page, page)
+            except Empty:
+                return
+            except Exception as e:
+                print(e)
+                continue
 
 
 def get_page_info(soup):
@@ -162,7 +183,7 @@ if args.depth:
 if args.graph:
     print("    Generating graph data")
 
-crawler(SITE, 0)
+run_crawler()
 print(f"Finished crawling in {datetime.now() - start_time}")
 
 if not args.report:
@@ -173,11 +194,11 @@ print("Generating report")
 
 dir = path.dirname(path.realpath(__file__))
 
-rows = session.query(Url).all()
+rows = database_session.query(Url).all()
 results = {"page_count": len(rows), "site": SITE, "pages": []}
 for row in rows:
     result = row.as_dict()
-    if "metadata_json" in result and result["metadata_json"] != None:
+    if "metadata_json" in result and result["metadata_json"]:
         result["metadata"] = {m[0]: m[1] for m in result["metadata_json"]}
 
     del result["metadata_json"]
