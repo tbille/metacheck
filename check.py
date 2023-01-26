@@ -53,6 +53,10 @@ requests_session = requests.Session()
 def remove_trailing_slash(url):
     if url[-1:] == "/":
         url = url[:-1]
+
+    if "#" in url:
+        url = url[: url.find("#")]
+
     return url
 
 
@@ -61,36 +65,26 @@ SITE = remove_trailing_slash(args.site)
 engine = create_engine(
     "sqlite:///database.db", connect_args={"check_same_thread": False}
 )
-session_factory = sessionmaker(bind=engine)
-session = scoped_session(session_factory)
+database_session_factory = sessionmaker(bind=engine)
+database_session = scoped_session(database_session_factory)
+
+Base.metadata.drop_all(engine)
 Base.metadata.create_all(engine)
 
 
 crawl_queue = Queue()
 crawl_queue.put(SITE)
 
-pool = ThreadPoolExecutor(max_workers=5)
-
-visited = set()
+visited = []
 
 
-def get_page(url):
-    try:
-        return requests_session.get(url)
-    except requests.RequestException:
-        return
+def process_page(page):
+    response = requests_session.get(page, timeout=15)
 
-
-def process_page(res):
-    response = res.result()
-    if not response:
-        return
-
-    page = remove_trailing_slash(response.url)
     if response.status_code != 200:
         entry = Url(site=SITE, url=page, status=response.status_code)
-        session.add(entry)
-        session.commit()
+        database_session.add(entry)
+        database_session.commit()
         return
 
     html_page = response.content
@@ -103,8 +97,8 @@ def process_page(res):
         status=response.status_code,
         metadata_json=get_page_info(soup),
     )
-    session.add(entry)
-    session.commit()
+    database_session.add(entry)
+    database_session.commit()
 
     for a in soup.find_all("a"):
         current_page = ""
@@ -117,16 +111,16 @@ def process_page(res):
             current_page = a.get("href")
 
         if current_page:
-            if "#" in current_page:
-                current_page = current_page[: current_page.find("#")]
-
             current_page = remove_trailing_slash(current_page)
-            if current_page not in crawl_queue.queue and current_page not in visited:
+            if (
+                current_page not in visited
+                and current_page not in crawl_queue.queue
+            ):
                 crawl_queue.put(current_page)
 
             if args.graph:
                 if (
-                    not session.query(LinkMap)
+                    not database_session.query(LinkMap)
                     .filter(
                         LinkMap.url == page,
                         LinkMap.link == current_page,
@@ -138,25 +132,23 @@ def process_page(res):
                         url=page,
                         link=current_page,
                     )
-                    session.add(link_entry)
-                    session.commit()
+                    database_session.add(link_entry)
+                    database_session.commit()
 
 
 def run_crawler():
-    while True:
-        try:
-            # Remove trailing slashes
-            page = remove_trailing_slash(crawl_queue.get(timeout=10))
-            if page not in visited:
-                visited.add(page)
-                job = pool.submit(get_page, page)
-                job.add_done_callback(process_page)
-        except Empty:
-            print("Empty")
-            return
-        except Exception as e:
-            print(e)
-            continue
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        while True:
+            try:
+                page = crawl_queue.get(timeout=15)
+                if page not in visited:
+                    visited.append(page)
+                    executor.submit(process_page, page)
+            except Empty:
+                return
+            except Exception as e:
+                print(e)
+                continue
 
 
 def get_page_info(soup):
@@ -202,7 +194,7 @@ print("Generating report")
 
 dir = path.dirname(path.realpath(__file__))
 
-rows = session.query(Url).all()
+rows = database_session.query(Url).all()
 results = {"page_count": len(rows), "site": SITE, "pages": []}
 for row in rows:
     result = row.as_dict()
