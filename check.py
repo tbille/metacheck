@@ -185,7 +185,7 @@ def generate_report():
 
     dir = path.dirname(path.realpath(__file__))
 
-    rows = session.query(Url).all()
+    rows = database_session.query(Url).all()
     results = {"page_count": len(rows), "site": SITE, "pages": []}
     for row in rows:
         result = row.as_dict()
