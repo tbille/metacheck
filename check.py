@@ -1,6 +1,9 @@
 import argparse
 import json
 from concurrent.futures import ThreadPoolExecutor
+from os import path, remove as remove_file
+from distutils.dir_util import remove_tree
+import tarfile
 from datetime import datetime
 from os import path
 from queue import Empty, Queue
@@ -176,6 +179,63 @@ def get_page_info(soup):
     return metadata
 
 
+def generate_report():
+    print("")
+    print("Generating report")
+
+    dir = path.dirname(path.realpath(__file__))
+
+    rows = database_session.query(Url).all()
+    results = {"page_count": len(rows), "site": SITE, "pages": []}
+    for row in rows:
+        result = row.as_dict()
+        if "metadata_json" in result and result["metadata_json"] != None:
+            result["metadata"] = {m[0]: m[1] for m in result["metadata_json"]}
+
+        del result["metadata_json"]
+        results["pages"].append(result)
+
+    raw_json = json.dumps(results)
+    template = ""
+
+    try:
+        remove_tree(f"{dir}/report")
+    except:
+        pass
+
+    print("Finding latest version of metacheck-report")
+    # get latest version of metacheck-report
+    response = requests.get(
+        "https://api.github.com/repos/Lukewh/metacheck-report/releases/latest"
+    ).json()
+
+    report_url = response["assets"][0]["browser_download_url"]
+    report_version = response["tag_name"]
+    print(f"\tDownloading: {report_version}")
+    report_tar = requests.get(report_url)
+
+    with open(f"{dir}/metacheck-report-{report_version}.tar.xz", "wb") as file:
+        file.write(report_tar.content)
+
+    print("\tExtracting files")
+    with tarfile.open(
+        f"{dir}/metacheck-report-{report_version}.tar.xz"
+    ) as file:
+        file.extractall(f"{dir}/report/")
+
+    print("\tDeleting download")
+    remove_file(f"{dir}/metacheck-report-{report_version}.tar.xz")
+
+    with open(f"{dir}/report/index.html", "r") as file:
+        template = file.read()
+
+    template = template.replace("{{data}}", raw_json)
+    with open(f"{dir}/report/index.html", "w") as file:
+        file.write(template)
+
+    print(f"Report created open file://{dir}/report/index.html")
+
+
 start_time = datetime.now()
 print(f"Crawling: {SITE}")
 if args.depth:
@@ -186,30 +246,5 @@ if args.graph:
 run_crawler()
 print(f"Finished crawling in {datetime.now() - start_time}")
 
-if not args.report:
-    exit()
-
-print("")
-print("Generating report")
-
-dir = path.dirname(path.realpath(__file__))
-
-rows = database_session.query(Url).all()
-results = {"page_count": len(rows), "site": SITE, "pages": []}
-for row in rows:
-    result = row.as_dict()
-    if "metadata_json" in result and result["metadata_json"]:
-        result["metadata"] = {m[0]: m[1] for m in result["metadata_json"]}
-
-    del result["metadata_json"]
-    results["pages"].append(result)
-
-raw_json = json.dumps(results)
-template = ""
-with open(f"{dir}/assets/report/index.html", "r") as file:
-    template = file.read().replace("{{data}}", raw_json)
-
-with open(f"{dir}/index.html", "w+") as file:
-    file.write(template)
-
-print(f"Report created open {dir}/report.html")
+if args.report:
+    generate_report()
