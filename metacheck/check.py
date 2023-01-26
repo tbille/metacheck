@@ -13,41 +13,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy import create_engine
 from sqlalchemy.orm import scoped_session, sessionmaker
 
-from model import Base, LinkMap, Url
-
-parser = argparse.ArgumentParser(
-    description=(
-        "Metadata checker for your website. "
-        "This program will generate a sqlite database "
-        "with all endpoints and the metadata of your site"
-    )
-)
-
-parser.add_argument("site", help="Your website.")
-parser.add_argument(
-    "-d", "--depth", help="How deep to follow links.", required=False, type=int
-)
-parser.add_argument(
-    "-g",
-    "--graph",
-    help="Save data to generate a graph.",
-    required=False,
-    action="store_true",
-)
-
-parser.add_argument(
-    "-r",
-    "--report",
-    help="Generate a report.",
-    required=False,
-    action="store_true",
-)
-
-args = parser.parse_args()
-
-if not args.site:
-    print("You must add add a URL to parse.")
-    exit(1)
+from metacheck.model import Base, LinkMap, Url
 
 
 requests_session = requests.Session()
@@ -62,8 +28,8 @@ def remove_trailing_slash(url):
 
     return url
 
-
-SITE = remove_trailing_slash(args.site)
+SITE = ""
+graphs = ""
 
 engine = create_engine(
     "sqlite:///database.db", connect_args={"check_same_thread": False}
@@ -76,7 +42,6 @@ Base.metadata.create_all(engine)
 
 
 crawl_queue = Queue()
-crawl_queue.put(SITE)
 
 visited = []
 
@@ -121,7 +86,7 @@ def process_page(page):
             ):
                 crawl_queue.put(current_page)
 
-            if args.graph:
+            if graphs:
                 if (
                     not database_session.query(LinkMap)
                     .filter(
@@ -217,15 +182,31 @@ def generate_report():
     print(f"Report created open file://{dir}/report/index.html")
 
 
-start_time = datetime.now()
-print(f"Crawling: {SITE}")
-if args.depth:
-    print(f"    Depth: {args.depth}")
-if args.graph:
-    print("    Generating graph data")
+import click
 
-run_crawler()
-print(f"Finished crawling in {datetime.now() - start_time}")
 
-if args.report:
-    generate_report()
+@click.command()
+@click.argument("site")
+@click.option("--depth", "-d", type=int, help="How deep to follow links.")
+@click.option("--graph", "-g", type=int, help="Save data to generate a graph.")
+@click.option("--report", "-r", type=int, help="Generate a report.")
+def main(site, depth=None, graph=False, report=False):
+
+    SITE = remove_trailing_slash(site)
+
+    crawl_queue.put(SITE)
+
+    graphs = graph
+
+    start_time = datetime.now()
+    print(f"Crawling: {SITE}")
+    if depth:
+        print(f"    Depth: {depth}")
+    if graph:
+        print("    Generating graph data")
+
+    run_crawler()
+    print(f"Finished crawling in {datetime.now() - start_time}")
+
+    if report:
+        generate_report()
