@@ -3,7 +3,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from os import path, remove as remove_file
 from distutils.dir_util import remove_tree
-import tarfile
+import zipfile
 from datetime import datetime
 from os import path
 from queue import Empty, Queue
@@ -203,28 +203,9 @@ def generate_report():
     except:
         pass
 
-    print("Finding latest version of metacheck-report")
-    # get latest version of metacheck-report
-    response = requests.get(
-        "https://api.github.com/repos/Lukewh/metacheck-report/releases/latest"
-    ).json()
-
-    report_url = response["assets"][0]["browser_download_url"]
-    report_version = response["tag_name"]
-    print(f"\tDownloading: {report_version}")
-    report_tar = requests.get(report_url)
-
-    with open(f"{dir}/metacheck-report-{report_version}.tar.xz", "wb") as file:
-        file.write(report_tar.content)
-
     print("\tExtracting files")
-    with tarfile.open(
-        f"{dir}/metacheck-report-{report_version}.tar.xz"
-    ) as file:
+    with zipfile.ZipFile(f"{dir}/assets/report.zip", "r") as file:
         file.extractall(f"{dir}/report/")
-
-    print("\tDeleting download")
-    remove_file(f"{dir}/metacheck-report-{report_version}.tar.xz")
 
     with open(f"{dir}/report/index.html", "r") as file:
         template = file.read()
