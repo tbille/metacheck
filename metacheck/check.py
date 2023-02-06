@@ -165,7 +165,7 @@ def generate_report(site):
                 for item in results["pages"]
                 if item["url"] == result["link"]
             ]
-            if len(results_item) > 0:
+            if results_item:
                 results_item = results_item[0]
                 if "links_from" not in results_item:
                     results_item["links_from"] = []
