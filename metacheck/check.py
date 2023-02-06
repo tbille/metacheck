@@ -1,54 +1,18 @@
-import argparse
 import json
-from concurrent.futures import ThreadPoolExecutor
-from os import path, remove as remove_file
-from distutils.dir_util import remove_tree
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from distutils.dir_util import remove_tree
 from os import path
 from queue import Empty, Queue
 
+import click
 import requests
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine
 from sqlalchemy.orm import scoped_session, sessionmaker
 
-from model import Base, LinkMap, Url
-
-parser = argparse.ArgumentParser(
-    description=(
-        "Metadata checker for your website. "
-        "This program will generate a sqlite database "
-        "with all endpoints and the metadata of your site"
-    )
-)
-
-parser.add_argument("site", help="Your website.")
-parser.add_argument(
-    "-d", "--depth", help="How deep to follow links.", required=False, type=int
-)
-parser.add_argument(
-    "-g",
-    "--graph",
-    help="Save data to generate a graph.",
-    required=False,
-    action="store_true",
-)
-
-parser.add_argument(
-    "-r",
-    "--report",
-    help="Generate a report.",
-    required=False,
-    action="store_true",
-)
-
-args = parser.parse_args()
-
-if not args.site:
-    print("You must add add a URL to parse.")
-    exit(1)
-
+from metacheck.model import Base, LinkMap, Url
 
 requests_session = requests.Session()
 
@@ -63,8 +27,6 @@ def remove_trailing_slash(url):
     return url
 
 
-SITE = remove_trailing_slash(args.site)
-
 engine = create_engine(
     "sqlite:///database.db", connect_args={"check_same_thread": False}
 )
@@ -76,16 +38,15 @@ Base.metadata.create_all(engine)
 
 
 crawl_queue = Queue()
-crawl_queue.put(SITE)
 
 visited = []
 
 
-def process_page(page):
+def process_page(site, page, graph):
     response = requests_session.get(page, timeout=15)
 
     if response.status_code != 200:
-        entry = Url(site=SITE, url=page, status=response.status_code)
+        entry = Url(site=site, url=page, status=response.status_code)
         database_session.add(entry)
         database_session.commit()
         return
@@ -95,7 +56,7 @@ def process_page(page):
     soup = BeautifulSoup(html_page, "html.parser")
 
     entry = Url(
-        site=SITE,
+        site=site,
         url=page,
         status=response.status_code,
         metadata_json=get_page_info(soup),
@@ -109,8 +70,8 @@ def process_page(page):
             continue
 
         if a.get("href").startswith("/"):
-            current_page = SITE + a.get("href")
-        elif a.get("href").startswith(SITE):
+            current_page = site + a.get("href")
+        elif a.get("href").startswith(site):
             current_page = a.get("href")
 
         if current_page:
@@ -121,7 +82,7 @@ def process_page(page):
             ):
                 crawl_queue.put(current_page)
 
-            if args.graph:
+            if graph:
                 if (
                     not database_session.query(LinkMap)
                     .filter(
@@ -131,7 +92,7 @@ def process_page(page):
                     .one_or_none()
                 ):
                     link_entry = LinkMap(
-                        site=SITE,
+                        site=site,
                         url=page,
                         link=current_page,
                     )
@@ -139,14 +100,14 @@ def process_page(page):
                     database_session.commit()
 
 
-def run_crawler():
+def run_crawler(site, graph):
     with ThreadPoolExecutor(max_workers=5) as executor:
         while True:
             try:
                 page = crawl_queue.get(timeout=15)
                 if page not in visited:
                     visited.append(page)
-                    executor.submit(process_page, page)
+                    executor.submit(process_page, site, page, graph)
             except Empty:
                 return
             except Exception as e:
@@ -179,17 +140,17 @@ def get_page_info(soup):
     return metadata
 
 
-def generate_report():
+def generate_report(site):
     print("")
     print("Generating report")
 
     dir = path.dirname(path.realpath(__file__))
 
     rows = database_session.query(Url).all()
-    results = {"page_count": len(rows), "site": SITE, "pages": []}
+    results = {"page_count": len(rows), "site": site, "pages": []}
     for row in rows:
         result = row.as_dict()
-        if "metadata_json" in result and result["metadata_json"] != None:
+        if "metadata_json" in result and result["metadata_json"]:
             result["metadata"] = {m[0]: m[1] for m in result["metadata_json"]}
 
         del result["metadata_json"]
@@ -200,7 +161,7 @@ def generate_report():
 
     try:
         remove_tree(f"{dir}/report")
-    except:
+    except Exception:
         pass
 
     print("\tExtracting files")
@@ -217,15 +178,26 @@ def generate_report():
     print(f"Report created open file://{dir}/report/index.html")
 
 
-start_time = datetime.now()
-print(f"Crawling: {SITE}")
-if args.depth:
-    print(f"    Depth: {args.depth}")
-if args.graph:
-    print("    Generating graph data")
+@click.command()
+@click.argument("site")
+@click.option("-d", "--depth", type=int, help="How deep to follow links.")
+@click.option(
+    "-g", "--graph", is_flag=True, help="Save data to generate a graph."
+)
+@click.option("-r", "--report", is_flag=True, help="Generate a report.")
+def main(site, depth=None, graph=False, report=False):
+    site = remove_trailing_slash(site)
+    crawl_queue.put(site)
 
-run_crawler()
-print(f"Finished crawling in {datetime.now() - start_time}")
+    start_time = datetime.now()
+    print(f"Crawling: {site}")
+    if depth:
+        print(f"    Depth: {depth}")
+    if graph:
+        print("    Generating graph data")
 
-if args.report:
-    generate_report()
+    run_crawler(site, graph)
+    print(f"Finished crawling in {datetime.now() - start_time}")
+
+    if report:
+        generate_report(site)
