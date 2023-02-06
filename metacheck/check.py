@@ -181,7 +181,9 @@ def generate_report(site):
 @click.command()
 @click.argument("site")
 @click.option("-d", "--depth", type=int, help="How deep to follow links.")
-@click.option( "-g", "--graph", is_flag=True, help="Save data to generate a graph.")
+@click.option(
+    "-g", "--graph", is_flag=True, help="Save data to generate a graph."
+)
 @click.option("-r", "--report", is_flag=True, help="Generate a report.")
 def main(site, depth=None, graph=False, report=False):
     site = remove_trailing_slash(site)
