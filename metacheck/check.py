@@ -1,20 +1,19 @@
-import argparse
 import json
+import tarfile
 from concurrent.futures import ThreadPoolExecutor
-from os import path, remove as remove_file
-from distutils.dir_util import remove_tree
-import zipfile
 from datetime import datetime
+from distutils.dir_util import remove_tree
 from os import path
+from os import remove as remove_file
 from queue import Empty, Queue
 
+import click
 import requests
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 from metacheck.model import Base, LinkMap, Url
-
 
 requests_session = requests.Session()
 
@@ -28,8 +27,6 @@ def remove_trailing_slash(url):
 
     return url
 
-SITE = ""
-graphs = ""
 
 engine = create_engine(
     "sqlite:///database.db", connect_args={"check_same_thread": False}
@@ -46,11 +43,11 @@ crawl_queue = Queue()
 visited = []
 
 
-def process_page(page):
+def process_page(site, page, graph):
     response = requests_session.get(page, timeout=15)
 
     if response.status_code != 200:
-        entry = Url(site=SITE, url=page, status=response.status_code)
+        entry = Url(site=site, url=page, status=response.status_code)
         database_session.add(entry)
         database_session.commit()
         return
@@ -60,7 +57,7 @@ def process_page(page):
     soup = BeautifulSoup(html_page, "html.parser")
 
     entry = Url(
-        site=SITE,
+        site=site,
         url=page,
         status=response.status_code,
         metadata_json=get_page_info(soup),
@@ -74,8 +71,8 @@ def process_page(page):
             continue
 
         if a.get("href").startswith("/"):
-            current_page = SITE + a.get("href")
-        elif a.get("href").startswith(SITE):
+            current_page = site + a.get("href")
+        elif a.get("href").startswith(site):
             current_page = a.get("href")
 
         if current_page:
@@ -86,7 +83,7 @@ def process_page(page):
             ):
                 crawl_queue.put(current_page)
 
-            if graphs:
+            if graph:
                 if (
                     not database_session.query(LinkMap)
                     .filter(
@@ -96,7 +93,7 @@ def process_page(page):
                     .one_or_none()
                 ):
                     link_entry = LinkMap(
-                        site=SITE,
+                        site=site,
                         url=page,
                         link=current_page,
                     )
@@ -104,14 +101,14 @@ def process_page(page):
                     database_session.commit()
 
 
-def run_crawler():
+def run_crawler(site, graph):
     with ThreadPoolExecutor(max_workers=5) as executor:
         while True:
             try:
                 page = crawl_queue.get(timeout=15)
                 if page not in visited:
                     visited.append(page)
-                    executor.submit(process_page, page)
+                    executor.submit(process_page, site, page, graph)
             except Empty:
                 return
             except Exception as e:
@@ -144,17 +141,17 @@ def get_page_info(soup):
     return metadata
 
 
-def generate_report():
+def generate_report(site):
     print("")
     print("Generating report")
 
     dir = path.dirname(path.realpath(__file__))
 
     rows = database_session.query(Url).all()
-    results = {"page_count": len(rows), "site": SITE, "pages": []}
+    results = {"page_count": len(rows), "site": site, "pages": []}
     for row in rows:
         result = row.as_dict()
-        if "metadata_json" in result and result["metadata_json"] != None:
+        if "metadata_json" in result and result["metadata_json"]:
             result["metadata"] = {m[0]: m[1] for m in result["metadata_json"]}
 
         del result["metadata_json"]
@@ -165,7 +162,7 @@ def generate_report():
 
     try:
         remove_tree(f"{dir}/report")
-    except:
+    except Exception:
         pass
 
     print("\tExtracting files")
@@ -182,31 +179,24 @@ def generate_report():
     print(f"Report created open file://{dir}/report/index.html")
 
 
-import click
-
-
 @click.command()
 @click.argument("site")
 @click.option("--depth", "-d", type=int, help="How deep to follow links.")
 @click.option("--graph", "-g", type=int, help="Save data to generate a graph.")
 @click.option("--report", "-r", type=int, help="Generate a report.")
 def main(site, depth=None, graph=False, report=False):
-
-    SITE = remove_trailing_slash(site)
-
-    crawl_queue.put(SITE)
-
-    graphs = graph
+    site = remove_trailing_slash(site)
+    crawl_queue.put(site)
 
     start_time = datetime.now()
-    print(f"Crawling: {SITE}")
+    print(f"Crawling: {site}")
     if depth:
         print(f"    Depth: {depth}")
     if graph:
         print("    Generating graph data")
 
-    run_crawler()
+    run_crawler(site, graph)
     print(f"Finished crawling in {datetime.now() - start_time}")
 
     if report:
-        generate_report()
+        generate_report(site)
