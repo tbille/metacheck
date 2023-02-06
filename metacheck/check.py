@@ -156,7 +156,23 @@ def generate_report(site):
         del result["metadata_json"]
         results["pages"].append(result)
 
+    if args.graph:
+        graph_rows = database_session.query(LinkMap).all()
+        for row in graph_rows:
+            result = row.as_dict()
+            results_item = [
+                item
+                for item in results["pages"]
+                if item["url"] == result["link"]
+            ]
+            if results_item:
+                results_item = results_item[0]
+                if "links_from" not in results_item:
+                    results_item["links_from"] = []
+                results_item["links_from"].append(result["url"])
+
     raw_json = json.dumps(results)
+
     template = ""
 
     try:
