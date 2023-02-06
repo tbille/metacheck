@@ -1,10 +1,9 @@
 import json
-import tarfile
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from distutils.dir_util import remove_tree
 from os import path
-from os import remove as remove_file
 from queue import Empty, Queue
 
 import click
